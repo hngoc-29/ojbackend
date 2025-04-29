@@ -35,6 +35,11 @@ app.use(express.json());
 
 // Routes
 app.use('/submissions', submissionRoute);
+app.all('/start', (req, res) => {
+    res.json({
+        success: true
+    })
+});
 
 // Khởi chạy server
 const PORT = process.env.PORT || 8080;
