@@ -130,9 +130,11 @@ router.post('/:id/run', async (req, res) => {
             } else if (run.status !== 0) {
                 status = 'runtime_error';
             } else {
-                const out = run.stdout.toString().trim();
-                const expected = (await (await fetch(tc.output)).text()).trim();
-                status = out === expected ? 'accepted' : 'wrong_answer';
+                const out = run.stdout.toString().replace(/\r\n/g, '\n').trimEnd();
+		const expectedRaw = await (await fetch(tc.output)).text();
+		const expected = expectedRaw.replace(/\r\n/g, '\n').trimEnd();
+		status = out === expected ? 'accepted' : 'wrong_answer';
+
                 if (status === 'accepted') passed++;
             }
 
