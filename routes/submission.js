@@ -65,7 +65,7 @@ router.post('/:id/run', async (req, res) => {
         if (submission.status !== 'not_run') {
             return res.status(200).json({
                 success: false,
-                message: 'Submission đã chạy hoặc đang chờ',
+                done: true,
                 msg: submission.msg,
                 status: submission.status,
                 score: submission.score,
