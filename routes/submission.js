@@ -22,7 +22,9 @@ const updateUserScoreInContests = async (userId, problemId, point) => {
     if (!contest) return;
 
     // Xác định index của problem và user
-    const problemIndex = contest.problems.findIndex(p => p.toString() === problemId.toString());
+    const problemIndex = contest.problems.findIndex(
+        p => p.toString() === problemId.toString()
+    );
     const userIndex = contest.user.findIndex(u => u._id.toString() === userId.toString());
     if (problemIndex < 0 || userIndex < 0) return;
 
@@ -39,13 +41,17 @@ const updateUserScoreInContests = async (userId, problemId, point) => {
     // Nếu mảng chưa đủ dài, pad zeros
     if (currentScores.length <= problemIndex) {
         const padding = Array(problemIndex + 1 - currentScores.length).fill(0);
-        updateOps[`user.${userIndex}.score`] = [...currentScores, ...padding];
+        // Cập nhật mảng score trước
+        await Contest.updateOne(
+            { _id: contest._id, 'user._id': userId },
+            { $set: { 'user.$.score': [...currentScores, ...padding] } }
+        );
     }
-    // Cập nhật phần tử cụ thể
-    updateOps[`user.${userIndex}.score.${problemIndex}`] = newScore;
-
-    // Thực hiện atomic update
-    await Contest.updateOne({ _id: contest._id }, { $set: updateOps });
+    // Sau đó chỉ cập nhật phần tử cụ thể theo user._id
+    await Contest.updateOne(
+        { _id: contest._id, 'user._id': userId },
+        { $set: { [`user.$.score.${problemIndex}`]: newScore } }
+    );
 };
 
 router.post('/:id/run', async (req, res) => {
