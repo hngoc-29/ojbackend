@@ -122,12 +122,15 @@ router.post('/:id/run', async (req, res) => {
             const inRes = await fetch(tc.input);
             const inputBuf = Buffer.from(await inRes.arrayBuffer());
 
+            const start = Date.now();
             const run = spawnSync(exePath, {
                 input: inputBuf,
                 timeout: problem.timeLimit,
                 killSignal: 'SIGKILL',
                 stdio: ['pipe', 'pipe', 'pipe'],
             });
+            const end = Date.now();
+            const time = ((end - start) / 1000).toFixed(3); // giây, 3 chữ số thập phân
 
             let status;
             if (run.error?.code === 'ETIMEDOUT' || run.signal === 'SIGKILL') {
@@ -143,7 +146,7 @@ router.post('/:id/run', async (req, res) => {
             }
 
             statuses.push(status);
-            io.emit(`submission_${id}`, { index: i, status, time: null, memory: null });
+            io.emit(`submission_${id}`, { index: i, status, time, memory: null }); // memory: null (chưa đo)
         }
 
         // Tính điểm và cập nhật
