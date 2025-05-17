@@ -137,7 +137,8 @@ router.post('/:id/run', async (req, res) => {
             await io.emit(`submission_${id}`, { index: i, status, time: null, memory: null });
         }
 
-        const score = (passed / total) * problem.point;
+        const score = Math.round((passed / total) * problem.point * 100) / 100;
+
         const finalStatus = passed === total ? 'accepted' : `${passed}/${total}`;
 
         await Submission.findByIdAndUpdate(id, { status: finalStatus, score, testStatuses: statuses });
