@@ -34,18 +34,22 @@ const updateUserScoreInContests = async (userId, problemId, point) => {
     const oldScore = currentScores[problemIndex] || 0;
     const newScore = Math.max(oldScore, point);
 
-    // Chuẩn bị ops update
-    const updateOps = {};
-    // Nếu mảng chưa đủ dài, pad zeros
     if (currentScores.length <= problemIndex) {
+        // Nếu mảng chưa đủ dài, pad zeros và cập nhật cả mảng
         const padding = Array(problemIndex + 1 - currentScores.length).fill(0);
-        updateOps[`user.${userIndex}.score`] = [...currentScores, ...padding];
+        const newScores = [...currentScores, ...padding];
+        newScores[problemIndex] = newScore;
+        await Contest.updateOne(
+            { _id: contest._id },
+            { $set: { [`user.${userIndex}.score`]: newScores } }
+        );
+    } else {
+        // Nếu mảng đã đủ dài, chỉ cập nhật phần tử
+        await Contest.updateOne(
+            { _id: contest._id },
+            { $set: { [`user.${userIndex}.score.${problemIndex}`]: newScore } }
+        );
     }
-    // Cập nhật phần tử cụ thể
-    updateOps[`user.${userIndex}.score.${problemIndex}`] = newScore;
-
-    // Thực hiện atomic update
-    await Contest.updateOne({ _id: contest._id }, { $set: updateOps });
 };
 
 router.post('/:id/run', async (req, res) => {
@@ -56,19 +60,24 @@ router.post('/:id/run', async (req, res) => {
             return res.status(400).json({ success: false, message: 'ID không hợp lệ' });
         }
 
-        const submission = await Submission.findById(id);
+        // Kiểm tra submission và cập nhật status atomically
+        const submission = await Submission.findOneAndUpdate(
+            { _id: id, status: 'not_run' },
+            { $set: { status: 'running', testStatuses: [] } },
+            { new: true }
+        );
         if (!submission) {
-            return res.status(404).json({ success: false, message: 'Không tìm thấy bài nộp' });
-        }
-
-        if (submission.status !== 'not_run') {
+            const existing = await Submission.findById(id);
+            if (!existing) {
+                return res.status(404).json({ success: false, message: 'Không tìm thấy bài nộp' });
+            }
             return res.status(200).json({
                 success: false,
                 done: true,
-                msg: submission.msg,
-                status: submission.status,
-                score: submission.score,
-                testStatuses: submission.testStatuses
+                msg: existing.msg,
+                status: existing.status,
+                score: existing.score,
+                testStatuses: existing.testStatuses
             });
         }
 
@@ -80,9 +89,7 @@ router.post('/:id/run', async (req, res) => {
             return;
         }
 
-        await Submission.findByIdAndUpdate(id, { status: 'running', testStatuses: [] });
-
-        // Lấy code, tạo file tạm và compile 1 lần
+        // Tải code
         const codeRes = await fetch(submission.code);
         const codeBuf = Buffer.from(await codeRes.arrayBuffer());
 
@@ -91,6 +98,7 @@ router.post('/:id/run', async (req, res) => {
         const exePath = path.join(tmpDir, 'Main');
         await fs.writeFile(srcPath, codeBuf);
 
+        // Compile
         const compile = spawnSync('g++', ['-O2', '-std=c++17', srcPath, '-o', exePath]);
         if (compile.status !== 0) {
             const errMsg = compile.stderr?.toString() || 'Lỗi biên dịch';
@@ -104,9 +112,11 @@ router.post('/:id/run', async (req, res) => {
             return;
         }
 
+        // Chạy các test case
         const total = problem.testcase.length;
         let passed = 0;
         const statuses = [];
+
         for (let i = 0; i < total; i++) {
             const tc = problem.testcase[i];
             const inRes = await fetch(tc.input);
@@ -129,19 +139,23 @@ router.post('/:id/run', async (req, res) => {
                 const expectedRaw = await (await fetch(tc.output)).text();
                 const expected = expectedRaw.replace(/\r\n/g, '\n').trimEnd();
                 status = out === expected ? 'accepted' : 'wrong_answer';
-
                 if (status === 'accepted') passed++;
             }
 
             statuses.push(status);
-            await io.emit(`submission_${id}`, { index: i, status, time: null, memory: null });
+            io.emit(`submission_${id}`, { index: i, status, time: null, memory: null });
         }
 
+        // Tính điểm và cập nhật
         const score = Math.round((passed / total) * problem.point * 100) / 100;
-
         const finalStatus = passed === total ? 'accepted' : `${passed}/${total}`;
 
-        await Submission.findByIdAndUpdate(id, { status: finalStatus, score, testStatuses: statuses });
+        await Submission.findByIdAndUpdate(id, {
+            status: finalStatus,
+            score,
+            testStatuses: statuses
+        });
+
         await updateUserScoreInContests(submission.userId, problem._id, score);
 
         io.emit(`submission_${id}`, { done: true, score, status: finalStatus });
@@ -151,6 +165,6 @@ router.post('/:id/run', async (req, res) => {
             res.status(500).json({ success: false, message: err.message });
         }
     }
-});
+})
 
 export default router;

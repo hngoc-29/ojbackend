@@ -17,6 +17,7 @@ const TestType = {
 const problemSchema = new mongoose.Schema({
     title: { type: String, required: true },
     content: { type: String, required: true },
+    public: { type: Boolean, default: false },
     timeLimit: { type: Number, required: true },
     memoryLimit: { type: Number, required: true },
     submissions: [{ type: SubmissionType, ref: 'Submission' }],
