@@ -15,7 +15,12 @@ const submissionSchema = new mongoose.Schema({
 
     // ← Thêm đây:
     testStatuses: {
-        type: [String],      // ví dụ: ['accepted','wrong_answer','accepted']
+        type: [
+            {
+                status: { type: String },
+                time: { type: Number } // giây, 3 chữ số thập phân
+            }
+        ],
         default: []
     }
 });

@@ -130,11 +130,14 @@ router.post('/:id/run', async (req, res) => {
                 stdio: ['pipe', 'pipe', 'pipe'],
             });
             const end = Date.now();
-            const time = ((end - start) / 1000).toFixed(3); // giây, 3 chữ số thập phân
+            const time = ((end - start) / 1000).toFixed(3);
 
             let status;
+            let displayTime = Number(time);
             if (run.error?.code === 'ETIMEDOUT' || run.signal === 'SIGKILL') {
                 status = 'timeout';
+                displayTime = (problem.timeLimit / 1000) + 0.001; // Đảm bảo lớn hơn timeLimit
+                // Không cần xử lý output nữa, dừng test tại đây
             } else if (run.status !== 0) {
                 status = 'runtime_error';
             } else {
@@ -145,8 +148,8 @@ router.post('/:id/run', async (req, res) => {
                 if (status === 'accepted') passed++;
             }
 
-            statuses.push(status);
-            io.emit(`submission_${id}`, { index: i, status, time, memory: null }); // memory: null (chưa đo)
+            statuses.push({ status, time: displayTime });
+            io.emit(`submission_${id}`, { index: i, status, time: displayTime, memory: null });
         }
 
         // Tính điểm và cập nhật
