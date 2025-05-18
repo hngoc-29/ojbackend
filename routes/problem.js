@@ -4,21 +4,19 @@ import Problem from '../models/Problem.js';
 import cloudinary from '../lib/cloudinary.js';
 import multer from 'multer';
 import jwt from 'jsonwebtoken';
-import cookieParser from 'cookie-parser';
 
 const router = express.Router();
 const upload = multer(); // dùng memory storage mặc định
 
-// Middleware lấy token từ cookie và xác thực JWT
-router.use(cookieParser());
+// Middleware xác thực Bearer token
 function authMiddleware(req, res, next) {
-    // Lấy token từ cookie (ví dụ cookie tên 'token')
-    const token = req.cookies?.token;
-    if (!token) {
+    // Lấy token từ header Authorization: Bearer <token>
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ success: false, message: 'Thiếu token xác thực' });
     }
+    const token = authHeader.split(' ')[1];
     try {
-        // Xác thực token, dùng secret từ biến môi trường
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         req.user = decoded;
         next();
