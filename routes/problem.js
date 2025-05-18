@@ -6,7 +6,11 @@ import multer from 'multer';
 import jwt from 'jsonwebtoken';
 
 const router = express.Router();
-const upload = multer(); // dùng memory storage mặc định
+const upload = multer({
+    limits: {
+        fileSize: 300 * 1024 * 1024 // 20MB
+    }
+});
 
 // Middleware xác thực Bearer token
 function authMiddleware(req, res, next) {
@@ -114,7 +118,7 @@ router.post(
 
             res.json({ success: true, message: 'Thêm testcase thành công', testcases: newTestcases });
         } catch (err) {
-            res.status(500).json({ success: false, message: err.message });
+            res.status(500).json({ success: false, message: err.message, error: true });
         }
     }
 );
