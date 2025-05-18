@@ -3,6 +3,7 @@ import { createServer } from 'http';
 import { Server as IOServer } from 'socket.io';
 import cors from 'cors';
 import submissionRoute from './routes/submission.js';
+import problemRoute from './routes/problem.js';
 import dbConnect from './lib/mongoose.js';
 import 'dotenv/config';
 
@@ -35,6 +36,7 @@ app.use(express.json());
 
 // Routes
 app.use('/submissions', submissionRoute);
+app.use('/problems', problemRoute);
 app.all('/start', (req, res) => {
     res.json({
         success: true
