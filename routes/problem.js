@@ -1,130 +1,133 @@
+import 'dotenv/config';
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
 import dbConnect from '../lib/mongoose.js';
 import Problem from '../models/Problem.js';
-import cloudinary from '../lib/cloudinary.js';
+import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
 import jwt from 'jsonwebtoken';
 
 const router = express.Router();
-const upload = multer({
-    limits: {
-        fileSize: 300 * 1024 * 1024 // 20MB
-    }
+
+// Cấu hình Cloudinary
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+    secure: true
 });
 
-// Middleware xác thực Bearer token
+// Tạo tmp folder nếu chưa tồn tại
+const tmpDir = path.join(process.cwd(), 'tmp');
+if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir);
+
+// Multer cấu hình ghi file vào tmp
+const storage = multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, tmpDir),
+    filename: (_req, file, cb) => cb(null, `${Date.now()}__${file.originalname}`)
+});
+const upload = multer({
+    storage,
+    limits: { fileSize: 300 * 1024 * 1024 }
+});
+
+// Phục vụ file tạm để Cloudinary có thể truy cập qua URL
+router.use('/tmp', express.static(tmpDir));
+
+// Middleware xác thực JWT
 function authMiddleware(req, res, next) {
-    // Lấy token từ header Authorization: Bearer <token>
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ success: false, message: 'Thiếu token xác thực' });
+    if (!authHeader?.startsWith('Bearer ')) {
+        return res.status(401).json({ success: false, message: 'Thiếu token' });
     }
     const token = authHeader.split(' ')[1];
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = decoded;
+        req.user = jwt.verify(token, process.env.JWT_SECRET);
         next();
-    } catch (err) {
+    } catch {
         return res.status(401).json({ success: false, message: 'Token không hợp lệ' });
     }
 }
 
-// Hàm upload buffer lên Cloudinary
-function uploadBuffer(buffer, folder, publicId) {
+// Hàm upload file từ URL
+async function uploadFileFromURL(filename, publicId, folder) {
+    const fileURL = `${process.env.BACKEND_URL}/tmp/${filename}`;
+
     return new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
-            { folder, resource_type: 'raw', public_id: publicId },
-            (error, result) => {
-                if (error) return reject(error);
-                resolve(result);
-            }
-        );
-        stream.end(buffer);
+        cloudinary.uploader.upload(fileURL, {
+            folder,
+            public_id: publicId,
+            resource_type: 'raw',
+            use_filename: true,
+            unique_filename: false
+        }, (err, result) => {
+            if (err) return reject(err);
+            resolve(result);
+        });
     });
 }
 
-// Hàm chuyển tên sang slug
-function toSlug(str) {
-    return str
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-zA-Z0-9\s]/g, '')
-        .trim()
-        .replace(/\s+/g, '-')
-        .toLowerCase();
-}
-
-// POST thêm testcase (có xác thực)
-router.post(
-    '/:id/testcase',
-    authMiddleware,
-    upload.any(),
-    async (req, res) => {
-        try {
-            await dbConnect();
-            const { id } = req.params;
-            // req.files là mảng [{fieldname, buffer, ...}]
-            const filesArr = req.files || [];
-            const problem = await Problem.findById(id);
-            if (!problem) {
-                return res.status(404).json({ success: false, message: 'Problem không tồn tại' });
-            }
-            const slug = toSlug(problem.title || problem.name || `problem-${id}`);
-
-            // Gom input/output theo index
-            const inputs = [];
-            const outputs = [];
-            filesArr.forEach(file => {
-                if (file.fieldname.startsWith('input')) {
-                    const idx = parseInt(file.fieldname.replace('input', ''));
-                    inputs[idx] = file;
-                }
-                if (file.fieldname.startsWith('output')) {
-                    const idx = parseInt(file.fieldname.replace('output', ''));
-                    outputs[idx] = file;
-                }
-            });
-
-            // Lọc undefined (nếu có lỗ hổng index)
-            const filteredInputs = inputs.filter(Boolean);
-            const filteredOutputs = outputs.filter(Boolean);
-
-            if (
-                !filteredInputs.length ||
-                !filteredOutputs.length ||
-                filteredInputs.length !== filteredOutputs.length
-            ) {
-                return res.status(400).json({ success: false, message: 'Thiếu file input hoặc output hoặc số lượng không khớp' });
-            }
-
-            const uploadPromises = filteredInputs.map(async (inputFile, idx) => {
-                const outputFile = filteredOutputs[idx];
-                if (!inputFile || !outputFile) return null;
-                const inputBuffer = inputFile.buffer;
-                const outputBuffer = outputFile.buffer;
-                const timestamp = Date.now();
-                const [inputRes, outputRes] = await Promise.all([
-                    uploadBuffer(inputBuffer, `testcase/${slug}`, `input_${idx}${timestamp}${idx}.txt`),
-                    uploadBuffer(outputBuffer, `testcase/${slug}`, `output_${idx}${timestamp}${idx}.txt`),
-                ]);
-                return {
-                    input: inputRes.secure_url,
-                    output: outputRes.secure_url,
-                };
-            });
-
-            const newTestcases = (await Promise.all(uploadPromises)).filter(Boolean);
-            problem.testcase.push(...newTestcases);
-            await problem.save();
-
-            res.json({ success: true, message: 'Thêm testcase thành công', testcases: newTestcases });
-        } catch (err) {
-            res.status(500).json({ success: false, message: err.message, error: true });
+// Route upload testcase
+router.post('/:id/testcase', authMiddleware, upload.any(), async (req, res) => {
+    try {
+        await dbConnect();
+        const { id } = req.params;
+        const problem = await Problem.findById(id);
+        if (!problem) {
+            return res.status(404).json({ success: false, message: 'Problem không tồn tại' });
         }
-    }
-);
 
-// Nếu muốn bảo vệ các route khác, thêm authMiddleware vào các route đó:
-// router.put('/:id/testcase', authMiddleware, upload.any(), async (req, res) => { ... });
-// router.delete('/:id/testcase', authMiddleware, async (req, res) => { ... });
+        // Gom cặp input/output theo key
+        const map = {};
+        for (const file of req.files) {
+            const m = file.fieldname.match(/^(input|output)(.*)$/);
+            if (!m) continue;
+            const [, type, rawKey] = m;
+            const key = rawKey || 'default';
+            map[key] = map[key] || { key };
+            map[key][type] = file;
+        }
+
+        const pairs = Object.values(map).filter(p => p.input && p.output);
+        if (pairs.length === 0) {
+            return res.status(400).json({ success: false, message: 'Không tìm thấy cặp input/output hợp lệ' });
+        }
+
+        const slug = problem.title
+            ? problem.title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\W+/g, '-')
+            : `problem-${id}`;
+
+        const results = [];
+        for (const p of pairs) {
+            const filenameIn = path.basename(p.input.path);
+            const filenameOut = path.basename(p.output.path);
+
+            const inputRes = await uploadFileFromURL(filenameIn, `${p.key}_in`, `testcase/${slug}`);
+            const outputRes = await uploadFileFromURL(filenameOut, `${p.key}_out`, `testcase/${slug}`);
+
+            const inputUrl = inputRes.secure_url || inputRes.url;
+            const outputUrl = outputRes.secure_url || outputRes.url;
+
+            if (!inputUrl || !outputUrl) {
+                throw new Error(`Cloudinary response không có URL (inputUrl=${inputUrl}, outputUrl=${outputUrl})`);
+            }
+
+            // Xoá file tạm
+            fs.unlinkSync(p.input.path);
+            fs.unlinkSync(p.output.path);
+
+            results.push({ input: inputUrl, output: outputUrl });
+        }
+
+        problem.testcase.push(...results);
+        await problem.save();
+
+        return res.json({ success: true, message: 'Thêm testcase thành công', testcases: results });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ success: false, message: err.message });
+    }
+});
 
 export default router;
