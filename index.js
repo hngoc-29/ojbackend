@@ -5,6 +5,7 @@ import cors from 'cors';
 import submissionRoute from './routes/submission.js';
 import problemRoute from './routes/problem.js';
 import dbConnect from './lib/mongoose.js';
+import path from 'path';
 import 'dotenv/config';
 
 const app = express();
@@ -35,6 +36,7 @@ await dbConnect();
 app.use(express.json());
 
 // Routes
+app.use('/tmp', express.static(path.join(process.cwd(), 'tmp')));
 app.use('/submissions', submissionRoute);
 app.use('/problems', problemRoute);
 app.all('/start', (req, res) => {
